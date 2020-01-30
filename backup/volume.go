@@ -31,6 +31,7 @@ func getVolumeList(conn net.Conn, version string) (docker, error) {
 	if err != nil {
 		return docker{}, err
 	}
+	defer response.Body.Close()
 	buffer, err := ioutil.ReadAll(response.Body)
 	if err != nil {
 		return docker{}, err
