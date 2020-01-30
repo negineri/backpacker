@@ -2,24 +2,22 @@ package backup
 
 import (
 	"net"
-	"net/http"
-	"bufio"
-	"io/ioutil"
-	"encoding/json"
+	"fmt"
 	"time"
 	"context"
-	"fmt"
 )
 
 type (
+	// Driver is object of backup target
 	Driver interface {
 		Monitor()
 	}
 
+	// A Target contains backup target info
 	Target struct {
-//		volumeSet volume.List
 		socket socket
 		version string
+		dest string
 	}
 
 	socket struct {
@@ -27,30 +25,27 @@ type (
 		address string
 	}
 	
-	docker struct{
-		Volumes []struct{
-			Name string
-			Labels []struct {
-				Cron *string `json:"com.negineri.backpacker.cron"`
-				Interval *string `json:"com.negineri.backpacker.interval"`
-			}
-		}
+	volume struct{
+		interval string
+		cancel context.CancelFunc
 	}
 )
 
+// New make backup target
 func New(network string, address string) Target {
-	return Target{socket: socket{network: network,address: address}, version: "v1.18"}
+	return Target{socket: socket{network: network,address: address}, version: "v1.24", dest: "/mnt/hdd1/backup"}
 }
 
+// Monitor monitor docker volume list
 func (t *Target) Monitor(ctx context.Context) {
 	conn,err := net.Dial(t.socket.network, t.socket.address)
 	if err != nil {
 		return
 	}
 	defer conn.Close()
-	wait := time.NewTicker(10 * time.Second)
+	wait := time.NewTicker(1 * time.Second)
 	defer wait.Stop()
-	active := make(map[string]bool)
+	active := make(map[string]*volume)
 	quit := make(chan string, 10)
 	defer close(quit)
 	for {
@@ -58,18 +53,27 @@ func (t *Target) Monitor(ctx context.Context) {
 		case <- ctx.Done():
 			return
 		case <- wait.C:
-			request, _ := http.NewRequest("GET", "http://" + t.version + "/volumes?filters={%22dangling%22:[%22false%22]}", nil)
-			request.Write(conn)
-			response, _ := http.ReadResponse(bufio.NewReader(conn), request)
-			buffer, _ := ioutil.ReadAll(response.Body)
-			volumes := docker{}
-			json.Unmarshal([]byte(string(buffer)), &volumes)
+			volumes, err := getVolumeList(conn, t.version)
+			if err != nil {
+				return
+			}
 			for _, s := range volumes.Volumes {
-				if _, ok := active[s.Name]; ok == false {
+				if s.Labels.Interval == nil {
+					continue
+				}
+				if val, ok := active[s.Name]; ok {
+					if val.interval != *s.Labels.Interval {
+						val.cancel()
+						val.interval = *s.Labels.Interval
+						cctx, cc := context.WithCancel(ctx)
+						val.cancel = cc
+						go schedule(cctx, *t, val.interval, s.Name)
+					}
+				}else{
 					fmt.Println(s.Name)
-					active[s.Name] = true
 					cctx, cc := context.WithCancel(ctx)
-					go t.volume(cctx, cc, quit, s.Name)
+					active[s.Name] = &volume{interval: *s.Labels.Interval, cancel: cc}
+					go schedule(cctx, *t, *s.Labels.Interval, s.Name)
 				}
 			}
 		case n := <- quit:
@@ -78,34 +82,47 @@ func (t *Target) Monitor(ctx context.Context) {
 	}
 }
 
-func (t *Target)volume(ctx context.Context, cancel context.CancelFunc, quit chan<- string, name string)  {
-	conn,err := net.Dial(t.socket.network, t.socket.address)
-	if err != nil {
+func schedule(ctx context.Context, t Target, interval string, name string) {
+	var ticker *time.Ticker
+	switch interval {
+	case "hourly":
+		ticker = time.NewTicker(1 * time.Hour)
+	case "daily":
+		ticker = time.NewTicker(24 * time.Hour)
+	case "weekly":
+		ticker = time.NewTicker(168 * time.Hour)
+	default:
 		return
 	}
-	defer conn.Close()
-	wait := time.NewTicker(10 * time.Second)
-	defer wait.Stop()
+	defer ticker.Stop()
+	if err := backup(t, name); err != nil {
+		return
+	}
 	for {
 		select {
-		case <- ctx.Done():
-			quit <- name
-			return
-		case <- wait.C:
-			request, _ := http.NewRequest("GET", "http://" + t.version + "/volumes/" + name, nil)
-			request.Write(conn)
-			response, _ := http.ReadResponse(bufio.NewReader(conn), request)
-			buffer, _ := ioutil.ReadAll(response.Body)
-			volumes := docker{}
-			json.Unmarshal([]byte(string(buffer)), &volumes)
-			for _, s := range volumes.Volumes {
-				if _, ok := active[s.Name]; ok == false {
-					fmt.Println(s.Name)
-					active[s.Name] = true
-					cctx, cc := context.WithCancel(ctx)
-					go volume(cctx, cc, quit, s.Name, t.socket)
-				}
+		case <- ticker.C:
+			if err := backup(t, name); err != nil {
+				return
 			}
+		case <-ctx.Done():
 		}
 	}
+}
+
+func backup(t Target, name string) error {
+	conn,err := net.Dial(t.socket.network, t.socket.address)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if err := createContainer(conn, t.version, name, t.dest); err != nil {
+		return err
+	}
+	if err := waitContainer(conn, t.version, name); err != nil {
+		return err
+	}
+	if err := deleteContainer(conn, t.version, name); err != nil {
+		return err
+	}
+	return nil
 }
