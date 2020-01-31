@@ -11,5 +11,5 @@ FROM alpine:latest
 LABEL maintainer="harusoin@gmail.com"
 WORKDIR /usr/local/backpacker
 RUN apk --no-cache add rsync
-COPY --from=builder /cmds/* .
+COPY --from=builder /cmds/ .
 CMD ["./backpacker"]
