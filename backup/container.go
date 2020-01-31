@@ -74,9 +74,9 @@ func getContainerList(conn net.Conn, version string) ([]containerJSON, error) {
 
 func createContainer(conn net.Conn, version, vname, dest string) (string, error) {
 	jsonStr := `{
-		"Image": "alpine:latest",
+		"Image": "negineri/backpacker:latest",
 		"HostConfig": {"Binds": ["` + vname + `:/mnt/src", "` + dest + `:/mnt/dest"]},
-		"Cmd": ["/bin/sh", "-c", "mkdir -p /mnt/dest/` + vname + ` && cp -av /mnt/src/* /mnt/dest/` + vname + `"]
+		"Cmd": ["/usr/local/backpacker/sync.sh", "/mnt/src/", "/mnt/dest/` + vname + `"]
 		}`
 	request, err := http.NewRequest("POST", "http://" + version + "/containers/create", bytes.NewBuffer([]byte(jsonStr)))
 	if err != nil {
