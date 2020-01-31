@@ -18,6 +18,18 @@ type (
 	}
 
 	containerJSON struct {
+		Labels struct {
+			Interval *string `json:"com.negineri.backpacker.interval"`
+		}
+		Mounts []struct{
+			Type string
+			Name string
+			Source string
+			RW bool
+		}
+	}
+
+	containerDeleteJSON struct {
 		Id string
 	}
 
@@ -27,6 +39,37 @@ func (err *DockerAPIError) Error() string { return err.Message }
 
 func dockerAPIErrorf(code int, message string) error {
 	return &DockerAPIError{Code: code, Message: message}
+}
+
+func getContainerList(conn net.Conn, version string) ([]containerJSON, error) {
+	request, err := http.NewRequest("GET", "http://" + version + "/containers/json", nil)
+	if err != nil {
+		return []containerJSON{}, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	if err := request.Write(conn); err != nil {
+		return []containerJSON{}, err
+	}
+	response, err := http.ReadResponse(bufio.NewReader(conn), request)
+	if err != nil {
+		return []containerJSON{}, err
+	}
+	defer response.Body.Close()
+	switch response.StatusCode {
+	case 200: //no error
+		buffer, err := ioutil.ReadAll(response.Body)
+		if err != nil {
+			return []containerJSON{}, err
+		}
+		var responseJSON []containerJSON
+		if err := json.Unmarshal([]byte(string(buffer)), &responseJSON); err != nil {
+			return []containerJSON{}, err
+		}
+		return responseJSON, nil
+	case 400: //bad parameter
+	case 500: //server error
+	}
+	return []containerJSON{}, dockerAPIErrorf(response.StatusCode, "")
 }
 
 func createContainer(conn net.Conn, version, vname, dest string) (string, error) {
@@ -55,7 +98,7 @@ func createContainer(conn net.Conn, version, vname, dest string) (string, error)
 		if err != nil {
 			return "", err
 		}
-		responseJSON := containerJSON{}
+		responseJSON := containerDeleteJSON{}
 		if err := json.Unmarshal([]byte(string(buffer)), &responseJSON); err != nil {
 			return "", err
 		}

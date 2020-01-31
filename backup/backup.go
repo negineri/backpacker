@@ -28,17 +28,9 @@ type (
 	
 	volume struct{
 		interval string
+		intervalTemp string
 		cancel context.CancelFunc
-		state volumeState
 	}
-
-	volumeState uint
-)
-
-const (
-	using volumeState = iota
-	unuse 
-	inactive
 )
 
 // New make backup target
@@ -57,9 +49,6 @@ func (t *Target) Monitor(ctx context.Context) {
 	defer wait.Stop()
 	activeVolume := make(map[string]*volume)
 	for {
-		for _, s := range activeVolume {
-			s.state = unuse
-		}
 		select {
 		case <- ctx.Done():
 			return
@@ -69,33 +58,66 @@ func (t *Target) Monitor(ctx context.Context) {
 				return
 			}
 			for _, s := range volumes.Volumes {
+				if _, ok := activeVolume[s.Name]; ok == false {
+					activeVolume[s.Name] = &volume{}
+				}
+				if s.Labels.Interval != nil {
+					activeVolume[s.Name].intervalTemp = *s.Labels.Interval
+				}
+			}
+			containerVolumes, err := getContainerList(conn, t.version)
+			if err != nil {
+				return
+			}
+			for _, s := range containerVolumes {
 				if s.Labels.Interval == nil {
 					continue
 				}
-				if val, ok := activeVolume[s.Name]; ok {
-					val.state = using
-					if val.interval != *s.Labels.Interval {
-						fmt.Println("Update " + s.Name + " volume")
-						val.cancel()
-						val.interval = *s.Labels.Interval
-						cctx, cc := context.WithCancel(ctx)
-						val.cancel = cc
-						go schedule(cctx, *t, val.interval, s.Name)
+				for _, m := range s.Mounts {
+					if m.Type != "volume" {
+						continue
 					}
-				}else{
-					fmt.Println("Detect " + s.Name + "volume")
-					cctx, cc := context.WithCancel(ctx)
-					activeVolume[s.Name] = &volume{interval: *s.Labels.Interval, cancel: cc, state: using}
-					go schedule(cctx, *t, *s.Labels.Interval, s.Name)
+					if priorityInterval(activeVolume[m.Name].intervalTemp) < priorityInterval(*s.Labels.Interval) {
+						activeVolume[m.Name].intervalTemp = *s.Labels.Interval
+					}
 				}
 			}
-			for _, s := range activeVolume {
-				if s.state == unuse {
-					s.cancel()
-					s.state = inactive
+			for i, s := range activeVolume {
+				if priorityInterval(s.intervalTemp) == 0 {
+					if priorityInterval(s.interval) != 0 {
+						s.cancel()
+						s.interval = ""
+					}
+					continue
 				}
+				if priorityInterval(s.interval) == priorityInterval(s.intervalTemp) {
+					s.intervalTemp = ""
+					continue
+				}
+				if priorityInterval(s.interval) != 0 {
+					s.cancel()
+				}
+				fmt.Println("Detect " + i + "volume")
+				s.interval = s.intervalTemp
+				s.intervalTemp = ""
+				cctx, cc := context.WithCancel(ctx)
+				s.cancel = cc
+				go schedule(cctx, *t, s.interval, i)
 			}
 		}
+	}
+}
+
+func priorityInterval(a string) int {
+	switch a {
+	case "hourly":
+		return 50
+	case "daily":
+		return 40
+	case "weekly":
+		return 30
+	default:
+		return 0
 	}
 }
 
