@@ -128,12 +128,13 @@ func startContainer(conn net.Conn, version, cname, vname string) error {
 	switch response.StatusCode {
 	case 204: //no error
 		fmt.Println("Start " + vname + " backup")
+		return nil
 	case 304: //container already started
 	case 404: //no such container
 		return dockerAPIErrorf(404, "Not found " + cname)
 	case 500: //server error
 	}
-	return nil
+	return dockerAPIErrorf(response.StatusCode, "Unknown Error " + cname)
 }
 
 func waitStopContainer(conn net.Conn, version, cname, vname string) error {
@@ -152,10 +153,11 @@ func waitStopContainer(conn net.Conn, version, cname, vname string) error {
 	switch response.StatusCode {
 	case 200: //no error
 		fmt.Println("End " + vname + " backup")
+		return nil
 	case 404: //no such container
 	case 500: //server error
 	}
-	return nil
+	return dockerAPIErrorf(response.StatusCode, "Unknown Error " + cname)
 }
 
 func deleteContainer(conn net.Conn, version, cname, vname string) error {
@@ -174,10 +176,11 @@ func deleteContainer(conn net.Conn, version, cname, vname string) error {
 	switch response.StatusCode {
 	case 204: //no error
 		fmt.Println("DELETE " + vname + " backup container")
+		return nil
 	case 400: //bad parameter
 	case 404: //no such container
 	case 409: //conflict
 	case 500: //server error
 	}
-	return nil
+	return dockerAPIErrorf(response.StatusCode, "Unknown Error " + cname)
 }

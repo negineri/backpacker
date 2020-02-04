@@ -97,7 +97,7 @@ func (t *Target) Monitor(ctx context.Context) {
 				if priorityInterval(s.interval) != 0 {
 					s.cancel()
 				}
-				fmt.Println("Detect " + i + "volume")
+				fmt.Println("Detect " + i + " volume")
 				s.interval = s.intervalTemp
 				s.intervalTemp = ""
 				cctx, cc := context.WithCancel(ctx)
