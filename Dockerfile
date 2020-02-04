@@ -10,6 +10,7 @@ RUN apk --no-cache add git && \
 FROM alpine:latest
 LABEL maintainer="harusoin@gmail.com"
 WORKDIR /usr/local/backpacker
-RUN apk --no-cache add rsync
 COPY --from=builder /cmds/ .
+RUN apk --no-cache add rsync && \
+    chmod 755 /usr/local/backpacker/*
 CMD ["./backpacker"]
